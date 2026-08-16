@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  /* Brand: a calm clinical teal/blue, deliberately not alarmist. */
+  --color-brand-50: #eef7f7;
+  --color-brand-100: #d3ebea;
+  --color-brand-200: #a8d7d5;
+  --color-brand-300: #74bdba;
+  --color-brand-400: #489e9c;
+  --color-brand-500: #2f8280;
+  --color-brand-600: #246866;
+  --color-brand-700: #1f5453;
+  --color-brand-800: #1b4444;
+  --color-brand-900: #183939;
+
+  --color-ink-50: #f6f7f8;
+  --color-ink-100: #eceef0;
+  --color-ink-200: #d5d9de;
+  --color-ink-300: #b1b9c2;
+  --color-ink-400: #8691a0;
+  --color-ink-500: #667284;
+  --color-ink-600: #515b6b;
+  --color-ink-700: #414957;
+  --color-ink-800: #2b303a;
+  --color-ink-900: #1a1d23;
+
+  --color-success-50: #eefaf1;
+  --color-success-500: #2e9e5b;
+  --color-success-600: #24824a;
+  --color-success-700: #1d6a3c;
+
+  --color-warning-50: #fff8ec;
+  --color-warning-500: #c8801c;
+  --color-warning-600: #a6690f;
+
+  --color-danger-50: #fdf1f1;
+  --color-danger-500: #c1443d;
+  --color-danger-600: #a3342f;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-ink-50 text-ink-900 antialiased;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
