@@ -1,16 +1,17 @@
-import { forwardRef, useId, type InputHTMLAttributes } from "react";
+import { forwardRef, useId, type InputHTMLAttributes, type ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
+  labelBadge?: ReactNode;
   error?: string;
   helpText?: string;
   unit?: string;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, helpText, unit, className, id, required, ...props }, ref) => {
+  ({ label, labelBadge, error, helpText, unit, className, id, required, ...props }, ref) => {
     const generatedId = useId();
     const inputId = id ?? generatedId;
     const errorId = `${inputId}-error`;
@@ -19,8 +20,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="flex flex-col gap-1.5">
         {label && (
-          <label htmlFor={inputId} className="text-sm font-medium text-ink-800">
+          <label htmlFor={inputId} className="flex items-center gap-2 text-sm font-medium text-ink-800">
             {label} {required && <span className="text-danger-500">*</span>}
+            {labelBadge}
           </label>
         )}
         <div className="relative">

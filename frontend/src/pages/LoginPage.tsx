@@ -7,6 +7,16 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useAuth } from "@/context/AuthContext";
 
+// Free-to-use (Unsplash License) photo of a healthcare worker caring for a
+// child. Swap this for your own licensed photo before a real presentation -
+// just replace this one URL. Prefer imagery that conveys care/support (a
+// health worker with a child, a checkup) over imagery of a child in visible
+// distress: it represents the same subject matter respectfully, and avoids
+// the consent/dignity and copyright risks of using photos of real,
+// identifiable, vulnerable children found via a generic image search.
+const LOGIN_HERO_IMAGE_URL =
+  "https://images.unsplash.com/photo-1639401122139-68a5840cb3bd?auto=format&fit=crop&w=1600&q=80";
+
 export function LoginPage() {
   const { session, signIn } = useAuth();
   const location = useLocation();
@@ -35,15 +45,31 @@ export function LoginPage() {
 
   return (
     <div className="flex min-h-screen">
-      <div className="hidden w-1/2 flex-col justify-between bg-brand-700 px-12 py-12 text-white lg:flex">
-        <div className="flex items-center gap-2">
-          <div className="flex size-10 items-center justify-center rounded-md bg-white/10">
+      <div className="relative hidden w-1/2 flex-col justify-between overflow-hidden px-12 py-12 text-white lg:flex">
+        {/* Background photo */}
+        <div
+          className="absolute inset-0 bg-cover bg-center"
+          style={{ backgroundImage: `url('${LOGIN_HERO_IMAGE_URL}')` }}
+          aria-hidden="true"
+        />
+        {/* Brand-tinted gradient overlay: darkest where text sits (top/bottom),
+            lighter in the middle so the photo still reads as a photo. Keeps
+            white text legible over any part of the image. */}
+        <div
+          className="absolute inset-0 bg-gradient-to-b from-brand-900/90 via-brand-900/55 to-brand-900/90"
+          aria-hidden="true"
+        />
+
+        <div className="relative z-10 flex items-center gap-2">
+          <div className="flex size-10 items-center justify-center rounded-md bg-white/10 backdrop-blur-sm">
             <Activity className="size-6" />
           </div>
           <span className="text-lg font-semibold">Nutrition DSS</span>
         </div>
 
-        <div>
+        {/* Frosted-glass card behind the headline for guaranteed contrast,
+            regardless of what's directly behind it in the photo. */}
+        <div className="relative z-10 rounded-2xl border border-white/10 bg-white/10 p-6 shadow-lg backdrop-blur-md">
           <h1 className="text-3xl font-semibold leading-tight">
             Machine Learning Decision Support for Child Nutrition Screening
           </h1>
@@ -53,7 +79,7 @@ export function LoginPage() {
           </p>
         </div>
 
-        <p className="text-sm text-brand-200">
+        <p className="relative z-10 text-sm text-brand-100">
           A decision-support tool - results assist, but do not replace, professional clinical
           judgment.
         </p>

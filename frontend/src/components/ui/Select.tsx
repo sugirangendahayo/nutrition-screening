@@ -1,9 +1,10 @@
-import { forwardRef, useId, type SelectHTMLAttributes } from "react";
+import { forwardRef, useId, type SelectHTMLAttributes, type ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
 interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   label?: string;
+  labelBadge?: ReactNode;
   error?: string;
   helpText?: string;
   options: { value: string; label: string }[];
@@ -11,7 +12,7 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  ({ label, error, helpText, options, placeholder, className, id, required, ...props }, ref) => {
+  ({ label, labelBadge, error, helpText, options, placeholder, className, id, required, ...props }, ref) => {
     const generatedId = useId();
     const selectId = id ?? generatedId;
     const errorId = `${selectId}-error`;
@@ -20,8 +21,9 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
     return (
       <div className="flex flex-col gap-1.5">
         {label && (
-          <label htmlFor={selectId} className="text-sm font-medium text-ink-800">
+          <label htmlFor={selectId} className="flex items-center gap-2 text-sm font-medium text-ink-800">
             {label} {required && <span className="text-danger-500">*</span>}
+            {labelBadge}
           </label>
         )}
         <select

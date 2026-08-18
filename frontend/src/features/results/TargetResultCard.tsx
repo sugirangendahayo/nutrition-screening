@@ -61,6 +61,11 @@ export function TargetResultCard({
             <ExplanationList items={explanation.items} />
           </div>
         )}
+
+        <p className="border-t border-ink-100 pt-3 text-xs text-ink-400">
+          Model: {prediction.algorithm} ({prediction.modelVersion}) - decision threshold{" "}
+          {prediction.decisionThreshold}
+        </p>
       </CardContent>
     </Card>
   );

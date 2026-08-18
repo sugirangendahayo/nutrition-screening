@@ -1,19 +1,26 @@
-# Flask & web layer - pinned exactly (pure Python, no compiled wheels needed)
+# Flask & web layer
 Flask==3.0.3
 Flask-Cors==4.0.1
 python-dotenv==1.0.1
 supabase==2.7.4
-PyJWT==2.9.0
+PyJWT[crypto]==2.9.0
 gunicorn==22.0.0
 
-# Data / ML stack - minimum versions only. These ship compiled wheels that are
-# tied to your Python interpreter version, so pinning an exact version here
-# can fail to install on a different Python version. `pip install` will pick
-# the newest compatible release. Tested with pandas 3.0.5 / numpy 2.5.2 /
-# scikit-learn 1.9.0 / shap 0.52.0 on Python 3.14.
+# Data / ML stack
+#
+# IMPORTANT: scikit-learn is pinned to match the exact version used to train
+# and pickle the supplied model artifacts (backend/models/*.pkl). A newer
+# scikit-learn (e.g. 1.9.x) CANNOT load these pickles - internal
+# ColumnTransformer/OneHotEncoder attributes changed between versions and
+# loading raises AttributeError. Do not upgrade this without re-verifying
+# against the actual artifacts (see docs/MODEL_INTEGRATION.md).
+#
+# This also means the backend requires Python 3.12 or earlier (scikit-learn
+# 1.6.1 has no wheels for Python 3.13/3.14 at time of writing).
+scikit-learn==1.6.1
+xgboost>=2.0
 pandas>=2.2
 numpy>=1.26
-scikit-learn>=1.5
 joblib>=1.4
 shap>=0.46
 
