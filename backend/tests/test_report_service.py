@@ -42,11 +42,10 @@ def test_build_assessment_report_summarizes_input():
                     "id": "a1",
                     "child_id": "c1",
                     "performed_by": "u1",
-                    "input_data": {"weight_kg": 9.5, "sex": "male"},
+                    "input_data": {"CAGE": 24, "HL4": "1.0"},
                     "notes": None,
                     "assessed_at": "2024-01-01T00:00:00Z",
                     "children": {"id": "c1", "child_code": "CH-2024-00001", "sex": "male"},
-                    "model_versions": {"version": "dev-mock-1.0", "mode": "mock"},
                     "profiles": {"full_name": "Jane Doe"},
                     "assessment_predictions": [],
                     "prediction_explanations": [],
@@ -58,7 +57,7 @@ def test_build_assessment_report_summarizes_input():
 
     report = report_service.build_assessment_report(fake, "a1")
     labels = {item["label"] for item in report["inputSummary"]}
-    assert "Weight" in labels
+    assert "Child age" in labels
     assert "Sex" in labels
     assert report["assessment"]["performedByName"] == "Jane Doe"
     assert report["trend"]["status"] == "insufficient_data"

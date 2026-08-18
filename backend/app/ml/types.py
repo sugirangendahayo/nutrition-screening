@@ -10,12 +10,18 @@ class TargetPrediction:
     target: str  # "stunting" | "underweight"
     predicted_label: str  # "at_risk" | "not_at_risk"
     probability: float | None  # probability of the "at_risk" class, 0-1
+    decision_threshold: float  # probability cutoff used to derive predicted_label
+    model_version: str
+    algorithm: str
 
     def to_dict(self) -> dict:
         return {
             "target": self.target,
             "predictedLabel": self.predicted_label,
             "probability": self.probability,
+            "decisionThreshold": self.decision_threshold,
+            "modelVersion": self.model_version,
+            "algorithm": self.algorithm,
         }
 
 
@@ -54,7 +60,6 @@ class TargetExplanation:
 @dataclass
 class PredictionBundle:
     mode: str  # "mock" | "real"
-    model_version: str
     targets: list[TargetPrediction]
     explanations: list[TargetExplanation]
     generated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -62,7 +67,6 @@ class PredictionBundle:
     def to_dict(self) -> dict:
         return {
             "mode": self.mode,
-            "modelVersion": self.model_version,
             "targets": [t.to_dict() for t in self.targets],
             "explanations": [e.to_dict() for e in self.explanations],
             "generatedAt": self.generated_at,
