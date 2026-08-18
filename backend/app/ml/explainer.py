@@ -1,17 +1,28 @@
-"""Explanation generation for real trained models.
+"""Explanation generation for the trained stunting/underweight pipelines.
 
-Prefers a local (per-prediction) explanation using SHAP. If SHAP cannot
-be computed (no background sample configured, incompatible model, or an
-error at runtime) it falls back to the model's global feature
-importance / coefficients, clearly labeled as such. It never fabricates
-numbers - every value returned has a concrete technical origin.
+Both supplied artifacts are `sklearn.pipeline.Pipeline(preprocessor, classifier)`
+where `classifier` is a tree ensemble (RandomForestClassifier or
+XGBClassifier) and `preprocessor` is a ColumnTransformer that one-hot
+encodes 19 of the 20 raw predictors, expanding them into 73 transformed
+columns (verified by direct inspection - see docs/MODEL_INTEGRATION.md).
+
+This module:
+1. Prefers a LOCAL, per-prediction explanation via `shap.TreeExplainer`,
+   which is exact and fast for tree ensembles and requires no background
+   sample.
+2. Aggregates the transformed (one-hot) SHAP values back to their
+   original raw predictor (e.g. all `cat__windex5_*` columns collapse
+   into one `windex5` contribution) so the UI can show "windex5
+   contributed X" instead of exposing one-hot internals to the user.
+3. Falls back to the classifier's global `feature_importances_`
+   (similarly aggregated) if SHAP cannot be computed, clearly labeled as
+   general model importance rather than a per-child explanation.
 """
 from __future__ import annotations
 
 import logging
 
 import numpy as np
-import pandas as pd
 
 from app.ml.feature_schema import get_fields_by_key
 from app.ml.types import ExplanationItem
@@ -34,6 +45,34 @@ LOCAL_EXPLANATION_NOTE = (
 )
 
 
+def _raw_feature_groups(transformed_names, raw_keys: list[str]) -> dict[str, list[int]]:
+    """Map each raw predictor to the indices of its transformed columns.
+
+    Transformed names follow the ColumnTransformer convention observed in
+    the artifacts: "num__<raw>" for the numeric feature, "cat__<raw>_<code>"
+    for one-hot encoded categorical columns.
+    """
+    groups: dict[str, list[int]] = {key: [] for key in raw_keys}
+    for idx, name in enumerate(transformed_names):
+        prefix, _, rest = name.partition("__")
+        matched = None
+        if prefix == "num" and rest in groups:
+            matched = rest
+        elif prefix == "cat":
+            for key in raw_keys:
+                if rest == key or rest.startswith(f"{key}_"):
+                    matched = key
+                    break
+        if matched:
+            groups[matched].append(idx)
+    return groups
+
+
+def _aggregate_to_raw_features(transformed_names, values, raw_keys: list[str]) -> dict[str, float]:
+    groups = _raw_feature_groups(transformed_names, raw_keys)
+    return {key: float(sum(values[i] for i in idxs)) for key, idxs in groups.items() if idxs}
+
+
 def _to_items(pairs: list[tuple[str, float]]) -> list[ExplanationItem]:
     fields_by_key = get_fields_by_key()
     items = []
@@ -50,69 +89,58 @@ def _to_items(pairs: list[tuple[str, float]]) -> list[ExplanationItem]:
     return items
 
 
-def explain_with_shap(predict_proba_fn, background_df: pd.DataFrame, input_df: pd.DataFrame):
-    """Attempt a local SHAP explanation. Returns (method, items) or None."""
+def explain_with_tree_shap(classifier, transformed_input, transformed_names, raw_keys, positive_index: int):
+    """Local SHAP explanation via TreeExplainer. Returns (method, items, note) or None."""
     try:
         import shap
 
-        explainer = shap.Explainer(predict_proba_fn, background_df)
-        explanation = explainer(input_df)
+        explainer = shap.TreeExplainer(classifier)
+        raw_shap = explainer.shap_values(transformed_input)
 
-        values = explanation.values
-        # Binary classifiers explained via a proba-returning callable may
-        # yield shape (n_samples, n_features, n_classes). We want the
-        # positive ("at risk") class, conventionally the last one.
-        if values.ndim == 3:
-            values = values[0, :, -1]
+        if isinstance(raw_shap, list):
+            # Some tree ensembles return one array per class.
+            values = np.asarray(raw_shap[positive_index])[0]
         else:
-            values = values[0]
+            arr = np.asarray(raw_shap)
+            # RandomForestClassifier (via shap 0.5x) -> shape (n, n_features, n_classes)
+            # XGBClassifier binary -> shape (n, n_features), already for the positive class
+            values = arr[0, :, positive_index] if arr.ndim == 3 else arr[0]
 
-        pairs = list(zip(input_df.columns.tolist(), values.tolist()))
-        pairs.sort(key=lambda item: abs(item[1]), reverse=True)
+        aggregated = _aggregate_to_raw_features(transformed_names, values, raw_keys)
+        pairs = sorted(aggregated.items(), key=lambda item: abs(item[1]), reverse=True)
         return "shap_local", _to_items(pairs), LOCAL_EXPLANATION_NOTE
     except Exception:  # noqa: BLE001 - any SHAP failure should gracefully fall back
-        logger.exception("SHAP local explanation failed; falling back to global importance.")
+        logger.exception("SHAP TreeExplainer failed; falling back to global importance.")
         return None
 
 
-def explain_with_global_importance(model, feature_names: list[str]):
-    estimator = model
-    if hasattr(model, "named_steps"):
-        estimator = list(model.named_steps.values())[-1]
+def explain_with_global_importance(classifier, transformed_names, raw_keys):
+    importances = getattr(classifier, "feature_importances_", None)
+    if importances is None:
+        coef = getattr(classifier, "coef_", None)
+        if coef is None:
+            return None
+        coef_arr = np.asarray(coef)
+        importances = np.abs(coef_arr[0]) if coef_arr.ndim > 1 else np.abs(coef_arr)
 
-    importances = None
-    if hasattr(estimator, "feature_importances_"):
-        importances = np.asarray(estimator.feature_importances_, dtype=float)
-    elif hasattr(estimator, "coef_"):
-        coef = np.asarray(estimator.coef_, dtype=float)
-        importances = np.abs(coef[0]) if coef.ndim > 1 else np.abs(coef)
-
-    if importances is None or len(importances) != len(feature_names):
+    if len(importances) != len(transformed_names):
         return None
 
-    pairs = list(zip(feature_names, importances.tolist()))
-    pairs.sort(key=lambda item: abs(item[1]), reverse=True)
+    aggregated = _aggregate_to_raw_features(transformed_names, importances, raw_keys)
+    pairs = sorted(aggregated.items(), key=lambda item: abs(item[1]), reverse=True)
     return "global_importance", _to_items(pairs), GLOBAL_IMPORTANCE_NOTE
 
 
-def build_explanation(
-    model,
-    predict_proba_fn,
-    input_df: pd.DataFrame,
-    background_df: pd.DataFrame | None,
-):
+def build_explanation(classifier, transformed_input, transformed_names, raw_keys, positive_index: int):
     """Return (method, items, note) using the best available technique."""
-    if background_df is not None and len(background_df) > 0:
-        result = explain_with_shap(predict_proba_fn, background_df, input_df)
-        if result is not None:
-            return result
+    result = explain_with_tree_shap(classifier, transformed_input, transformed_names, raw_keys, positive_index)
+    if result is not None:
+        return result
 
-    fallback = explain_with_global_importance(model, input_df.columns.tolist())
-    if fallback is not None:
-        return fallback
+    result = explain_with_global_importance(classifier, transformed_names, raw_keys)
+    if result is not None:
+        return result
 
     return "unavailable", [], (
-        "No explanation method is currently available for this model. Add a "
-        "background sample to enable SHAP, or use a model exposing "
-        "feature_importances_/coef_."
+        "No explanation method is currently available for this model."
     )

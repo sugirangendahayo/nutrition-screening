@@ -104,12 +104,16 @@ class MockModelProvider(ModelProvider):
 
         for target in PREDICTION_TARGETS:
             probability, items = self._score_target(target, features)
-            predicted_label = "at_risk" if probability >= 0.5 else "not_at_risk"
+            threshold = 0.5
+            predicted_label = "at_risk" if probability >= threshold else "not_at_risk"
             targets.append(
                 TargetPrediction(
                     target=target,
                     predicted_label=predicted_label,
                     probability=round(probability, 4),
+                    decision_threshold=threshold,
+                    model_version=self.version,
+                    algorithm="development-mock (deterministic seeded function)",
                 )
             )
             explanations.append(
@@ -127,7 +131,6 @@ class MockModelProvider(ModelProvider):
 
         return PredictionBundle(
             mode=self.mode,
-            model_version=self.version,
             targets=targets,
             explanations=explanations,
         )
@@ -135,9 +138,14 @@ class MockModelProvider(ModelProvider):
     def describe(self) -> dict:
         return {
             "mode": self.mode,
-            "version": self.version,
-            "algorithm": "development-mock (deterministic seeded function)",
-            "targets": list(PREDICTION_TARGETS),
+            "targets": {
+                target: {
+                    "version": self.version,
+                    "algorithm": "development-mock (deterministic seeded function)",
+                    "decisionThreshold": 0.5,
+                }
+                for target in PREDICTION_TARGETS
+            },
             "explanationMethod": "development_mock",
             "note": (
                 "No trained model artifact is currently loaded. Predictions are "

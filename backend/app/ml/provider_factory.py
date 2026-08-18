@@ -21,21 +21,25 @@ def init_provider(config) -> None:
     if config.ML_MODEL_STATUS == "production":
         try:
             _provider = RealModelProvider(config)
-            logger.info("Loaded real model provider (version=%s)", config.MODEL_VERSION)
+            logger.info(
+                "Loaded real model providers: stunting=%s underweight=%s",
+                config.STUNTING_MODEL_VERSION,
+                config.UNDERWEIGHT_MODEL_VERSION,
+            )
             return
         except ModelNotAvailableError as exc:
             _provider_error = str(exc)
             logger.error(
-                "ML_MODEL_STATUS=production but the model could not be loaded: %s", exc
+                "ML_MODEL_STATUS=production but the model(s) could not be loaded: %s", exc
             )
             _provider = None
             return
 
-    _provider = MockModelProvider(version=config.MODEL_VERSION)
+    _provider = MockModelProvider(version=config.MOCK_MODEL_VERSION)
     logger.warning(
         "Running with the DEVELOPMENT MOCK model provider. Predictions are not "
-        "real ML results. Set ML_MODEL_STATUS=production with a valid artifact "
-        "to use the trained model."
+        "real ML results. Set ML_MODEL_STATUS=production with valid artifacts "
+        "to use the trained models."
     )
 
 

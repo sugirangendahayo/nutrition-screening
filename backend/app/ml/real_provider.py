@@ -1,26 +1,24 @@
-"""Real prediction provider, backed by trained artifact(s) on disk.
+"""Real prediction provider backed by the two trained artifacts.
 
-Supports two artifact layouts, selected via `MODEL_MODE`:
+Verified by direct inspection (see docs/MODEL_INTEGRATION.md):
 
-    dual_model
-        Two separate model files, one per target:
-        STUNTING_MODEL_PATH, UNDERWEIGHT_MODEL_PATH
+    stunting_model.pkl     sklearn.pipeline.Pipeline(preprocessor, classifier)
+                            classifier = RandomForestClassifier
+    underweight_model.pkl   sklearn.pipeline.Pipeline(preprocessor, classifier)
+                            classifier = XGBClassifier
 
-    single_multioutput
-        One model file (MODEL_PATH) that produces predictions for both
-        targets at once (e.g. a MultiOutputClassifier or a model with two
-        output columns).
+Both pipelines are fully self-contained: the `preprocessor` step (a
+ColumnTransformer doing median imputation + scaling for CAGE, and
+most-frequent imputation + one-hot encoding for the other 19 raw MICS6
+predictors) is already fitted and saved inside the pickle. Flask must
+NOT re-implement or re-fit any preprocessing - it only needs to build a
+single-row DataFrame with the exact raw column names/order the pipeline
+expects and call it directly.
 
-An optional shared PREPROCESSOR_PATH artifact (e.g. a fitted
-ColumnTransformer) is applied to the raw input before it reaches the
-model(s), for architectures where preprocessing was fit separately from
-the estimator during training.
-
-IMPORTANT: this module intentionally does not assume specific feature
-names, encodings, or output conventions beyond what is documented in
-`docs/MODEL_INTEGRATION.md`. When the real artifact is supplied, it must
-be inspected and this module (and the assumptions below) validated
-against it before enabling ML_MODEL_STATUS=production.
+`classes_` for both classifiers is `[0, 1]`, matching the notebook's
+target definition (`stunting = 1 if HAZ < -2 else 0`, `underweight = 1
+if WAZ < -2 else 0`), so index 1 is unambiguously the "at risk"
+probability - verified, not assumed.
 """
 from __future__ import annotations
 
@@ -33,152 +31,139 @@ import pandas as pd
 
 from app.ml.base_provider import ModelProvider
 from app.ml.explainer import build_explanation
-from app.ml.feature_schema import FEATURE_FIELDS, PREDICTION_TARGETS, get_fields_by_key
+from app.ml.feature_schema import PREDICTION_TARGETS, RAW_FEATURE_ORDER
 from app.ml.types import PredictionBundle, TargetExplanation, TargetPrediction
 
 logger = logging.getLogger(__name__)
 
-FEATURE_KEYS = [f.key for f in FEATURE_FIELDS]
+# Verified from `classifier.classes_ == [0, 1]` on both artifacts - class 1
+# is the "at risk" outcome (see module docstring).
+POSITIVE_CLASS_INDEX = 1
 
 
 class ModelNotAvailableError(RuntimeError):
-    """Raised when production mode is requested but no valid artifact is loaded."""
+    """Raised when production mode is requested but an artifact can't be loaded."""
 
 
-def _positive_class_index(classes) -> int:
-    """Best-effort detection of which class index represents 'at risk'.
+class _TargetPipeline:
+    """Wraps one target's trained sklearn Pipeline (preprocessor + classifier)."""
 
-    Assumes the common scikit-learn convention where classes are sorted
-    and the positive class is encoded as 1 / "1" / "at_risk", which is
-    typically the last entry. This MUST be verified against the actual
-    trained artifact - see docs/MODEL_INTEGRATION.md.
-    """
-    classes_list = list(classes)
-    for candidate in (1, "1", "at_risk", "yes", True):
-        if candidate in classes_list:
-            return classes_list.index(candidate)
-    return len(classes_list) - 1
+    def __init__(self, path: str, version: str, decision_threshold: float):
+        if not os.path.exists(path):
+            raise ModelNotAvailableError(f"Expected trained artifact at '{path}' but it was not found.")
 
+        self.pipeline = joblib.load(path)
+        if "preprocessor" not in self.pipeline.named_steps or "classifier" not in self.pipeline.named_steps:
+            raise ModelNotAvailableError(
+                f"Artifact at '{path}' is not the expected Pipeline(preprocessor, classifier) shape."
+            )
 
-class _TargetModel:
-    def __init__(self, path: str):
-        self.path = path
-        self.estimator = joblib.load(path)
-        self.positive_index = None
-        if hasattr(self.estimator, "classes_"):
-            self.positive_index = _positive_class_index(self.estimator.classes_)
+        self.preprocessor = self.pipeline.named_steps["preprocessor"]
+        self.classifier = self.pipeline.named_steps["classifier"]
+        self.version = version
+        self.decision_threshold = decision_threshold
+        self.algorithm = type(self.classifier).__name__
 
-    def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
-        if hasattr(self.estimator, "predict_proba"):
-            proba = self.estimator.predict_proba(df)
-            index = self.positive_index if self.positive_index is not None else proba.shape[1] - 1
-            return proba[:, index]
-        # Fall back to hard predictions if the estimator has no predict_proba.
-        preds = self.estimator.predict(df)
-        return np.asarray([1.0 if p in (1, "1", "at_risk", True) else 0.0 for p in preds])
+        expected_features = list(getattr(self.preprocessor, "feature_names_in_", []))
+        if expected_features and expected_features != RAW_FEATURE_ORDER:
+            raise ModelNotAvailableError(
+                f"Artifact at '{path}' expects features {expected_features}, which does not match "
+                f"app.ml.feature_schema.RAW_FEATURE_ORDER ({RAW_FEATURE_ORDER}). The schema must be "
+                "reconciled with the actual artifact before it can be used safely."
+            )
+
+        classes = list(getattr(self.classifier, "classes_", []))
+        if classes and classes != [0, 1]:
+            raise ModelNotAvailableError(
+                f"Artifact at '{path}' has unexpected classes_ {classes}; expected [0, 1]. "
+                "The positive-class assumption in real_provider.py must be re-verified."
+            )
+
+    def predict_proba(self, raw_df: pd.DataFrame) -> float:
+        transformed = self.preprocessor.transform(raw_df)
+        proba = self.classifier.predict_proba(transformed)
+        return float(proba[0, POSITIVE_CLASS_INDEX])
+
+    def explain(self, raw_df: pd.DataFrame):
+        transformed = self.preprocessor.transform(raw_df)
+        transformed_names = self.preprocessor.get_feature_names_out()
+        return build_explanation(
+            self.classifier, transformed, transformed_names, RAW_FEATURE_ORDER, POSITIVE_CLASS_INDEX
+        )
 
 
 class RealModelProvider(ModelProvider):
     mode = "real"
 
     def __init__(self, config):
-        self.version = config.MODEL_VERSION
         self.config = config
-        self._fields_by_key = get_fields_by_key()
-        self.preprocessor = None
-        self.background_df: pd.DataFrame | None = None
-        self.models: dict[str, _TargetModel] = {}
-        self._load(config)
-
-    def _load(self, config):
-        if config.PREPROCESSOR_PATH and os.path.exists(config.PREPROCESSOR_PATH):
-            self.preprocessor = joblib.load(config.PREPROCESSOR_PATH)
-
-        if config.BACKGROUND_DATA_PATH and os.path.exists(config.BACKGROUND_DATA_PATH):
-            self.background_df = joblib.load(config.BACKGROUND_DATA_PATH)
-
-        if config.MODEL_MODE == "dual_model":
-            for target, path in (
-                ("stunting", config.STUNTING_MODEL_PATH),
-                ("underweight", config.UNDERWEIGHT_MODEL_PATH),
-            ):
-                if not os.path.exists(path):
-                    raise ModelNotAvailableError(
-                        f"Expected trained artifact for '{target}' at '{path}' but it was not found."
-                    )
-                self.models[target] = _TargetModel(path)
-        elif config.MODEL_MODE == "single_multioutput":
-            if not os.path.exists(config.MODEL_PATH):
-                raise ModelNotAvailableError(
-                    f"Expected trained artifact at '{config.MODEL_PATH}' but it was not found."
-                )
-            shared = _TargetModel(config.MODEL_PATH)
-            for target in PREDICTION_TARGETS:
-                self.models[target] = shared
-        else:
-            raise ModelNotAvailableError(f"Unsupported MODEL_MODE '{config.MODEL_MODE}'.")
+        self.targets: dict[str, _TargetPipeline] = {
+            "stunting": _TargetPipeline(
+                config.STUNTING_MODEL_PATH, config.STUNTING_MODEL_VERSION, config.STUNTING_DECISION_THRESHOLD
+            ),
+            "underweight": _TargetPipeline(
+                config.UNDERWEIGHT_MODEL_PATH, config.UNDERWEIGHT_MODEL_VERSION, config.UNDERWEIGHT_DECISION_THRESHOLD
+            ),
+        }
 
     def _build_dataframe(self, features: dict) -> pd.DataFrame:
-        row = {key: features.get(key, np.nan) for key in FEATURE_KEYS}
-        return pd.DataFrame([row], columns=FEATURE_KEYS)
+        """Build the single-row raw input DataFrame the pipelines expect.
 
-    def _predict_proba_fn(self, target_model: _TargetModel):
-        def fn(df: pd.DataFrame) -> np.ndarray:
-            data = df
-            if self.preprocessor is not None:
-                data = self.preprocessor.transform(df)
-            return target_model.predict_proba(data)
-
-        return fn
+        IMPORTANT: the fitted OneHotEncoder's learned categories for all 19
+        categorical predictors are native numpy float64 values (e.g. 1.0,
+        2.0), NOT strings - verified by inspecting `categories_` directly.
+        The application layer represents category codes as strings (e.g.
+        "1.0") for clean JSON/UI handling, so they MUST be converted to
+        float here before reaching the pipeline. Passing strings instead
+        would not raise an error - `handle_unknown="ignore"` would just
+        silently zero out that feature, which was confirmed empirically
+        during integration testing to change predictions without warning.
+        """
+        row = {}
+        for key in RAW_FEATURE_ORDER:
+            value = features.get(key, np.nan)
+            if key != "CAGE" and value is not None and not (isinstance(value, float) and np.isnan(value)):
+                value = float(value)
+            row[key] = value
+        return pd.DataFrame([row], columns=RAW_FEATURE_ORDER)
 
     def predict(self, features: dict) -> PredictionBundle:
-        input_df = self._build_dataframe(features)
+        raw_df = self._build_dataframe(features)
 
         targets: list[TargetPrediction] = []
         explanations: list[TargetExplanation] = []
 
         for target in PREDICTION_TARGETS:
-            target_model = self.models[target]
-            predict_fn = self._predict_proba_fn(target_model)
-
-            data_for_model = input_df
-            if self.preprocessor is not None:
-                data_for_model = self.preprocessor.transform(input_df)
-            probability = float(target_model.predict_proba(data_for_model)[0])
-            predicted_label = "at_risk" if probability >= 0.5 else "not_at_risk"
+            target_pipeline = self.targets[target]
+            probability = target_pipeline.predict_proba(raw_df)
+            predicted_label = "at_risk" if probability >= target_pipeline.decision_threshold else "not_at_risk"
 
             targets.append(
                 TargetPrediction(
                     target=target,
                     predicted_label=predicted_label,
                     probability=round(probability, 4),
+                    decision_threshold=target_pipeline.decision_threshold,
+                    model_version=target_pipeline.version,
+                    algorithm=target_pipeline.algorithm,
                 )
             )
 
-            method, items, note = build_explanation(
-                model=target_model.estimator,
-                predict_proba_fn=predict_fn,
-                input_df=input_df,
-                background_df=self.background_df,
-            )
-            explanations.append(
-                TargetExplanation(target=target, method=method, items=items, note=note)
-            )
+            method, items, note = target_pipeline.explain(raw_df)
+            explanations.append(TargetExplanation(target=target, method=method, items=items, note=note))
 
-        return PredictionBundle(
-            mode=self.mode,
-            model_version=self.version,
-            targets=targets,
-            explanations=explanations,
-        )
+        return PredictionBundle(mode=self.mode, targets=targets, explanations=explanations)
 
     def describe(self) -> dict:
         return {
             "mode": self.mode,
-            "version": self.version,
-            "modelMode": self.config.MODEL_MODE,
-            "targets": list(PREDICTION_TARGETS),
-            "explanationMethod": "shap_local (falls back to global_importance)" if self.background_df is not None else "global_importance",
-            "hasBackgroundSample": self.background_df is not None,
-            "hasSharedPreprocessor": self.preprocessor is not None,
+            "targets": {
+                target: {
+                    "version": tp.version,
+                    "algorithm": tp.algorithm,
+                    "decisionThreshold": tp.decision_threshold,
+                }
+                for target, tp in self.targets.items()
+            },
+            "explanationMethod": "shap_local (TreeExplainer, falls back to global_importance)",
         }

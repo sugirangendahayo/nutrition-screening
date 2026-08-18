@@ -1,5 +1,8 @@
+import type { ReactNode } from "react";
+
 interface RadioGroupProps {
   label: string;
+  labelBadge?: ReactNode;
   name: string;
   value: string;
   onChange: (value: string) => void;
@@ -11,6 +14,7 @@ interface RadioGroupProps {
 
 export function RadioGroup({
   label,
+  labelBadge,
   name,
   value,
   onChange,
@@ -21,8 +25,9 @@ export function RadioGroup({
 }: RadioGroupProps) {
   return (
     <fieldset className="flex flex-col gap-1.5">
-      <legend className="text-sm font-medium text-ink-800">
+      <legend className="flex items-center gap-2 text-sm font-medium text-ink-800">
         {label} {required && <span className="text-danger-500">*</span>}
+        {labelBadge}
       </legend>
       <div className="flex flex-wrap gap-4 pt-1">
         {options.map((option) => (

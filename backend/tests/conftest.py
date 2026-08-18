@@ -47,17 +47,27 @@ def auth_as(mocker):
     return _auth_as
 
 
+# Matches the exact 20 raw MICS6 predictor codes expected by the trained
+# pipelines (see app.ml.feature_schema.RAW_FEATURE_ORDER).
 VALID_SCREENING_INPUT = {
-    "child_age_months": 24,
-    "sex": "male",
-    "weight_kg": 10.5,
-    "height_cm": 82.0,
-    "breastfeeding_status": "no_longer_breastfeeding",
-    "mother_education_level": "secondary",
-    "household_wealth_index": "middle",
-    "residence_type": "urban",
-    "drinking_water_source": "improved",
-    "sanitation_facility": "improved",
-    "vitamin_a_supplementation": "yes",
-    "immunization_status": "fully_immunized",
+    "CAGE": 24,
+    "HL4": "1.0",
+    "CA31": "1.0",
+    "IM2": "1.0",
+    "BD2": "1.0",
+    "cdisability": "1.0",
+    "cinsurance": "1.0",
+    "melevel": "0.0",
+    "caretakerdis": "1.0",
+    "HH6": "1.0",
+    "HH7": "1.0",
+    "windex5": "1.0",
+    "religion": "1.0",
+    "ethnicity": "1.0",
+    "CA1": "1.0",
+    "CA14": "1.0",
+    "CA16": "1.0",
+    "CA17": "1.0",
+    "TN3": "1.0",
+    "EC1": "0.0",
 }
