@@ -1,23 +1,25 @@
 """Persistence and retrieval logic for children, assessments, and results.
 
-Schema (see supabase/migrations/0001_init.sql):
+Schema (see supabase/migrations/):
     children                -> one row per child (de-identified: no name is stored)
-    model_versions           -> one row per distinct model version/mode seen
+    model_versions           -> one row per distinct (target, version, mode) seen
     assessments               -> one row per nutrition screening event
-    assessment_predictions    -> one row per (assessment, target)
+    assessment_predictions    -> one row per (assessment, target), including
+                                  the model version and decision threshold used
     prediction_explanations   -> one row per (assessment, target, feature)
 """
 from __future__ import annotations
 
-from app.ml.types import PredictionBundle
+from app.ml.types import PredictionBundle, TargetPrediction
 
 
-def ensure_model_version(supabase, bundle: PredictionBundle) -> str:
+def ensure_model_version(supabase, target_prediction: TargetPrediction, mode: str) -> str:
+    """Get-or-create the model_versions row for one target's specific model."""
     existing = (
         supabase.table("model_versions")
         .select("id")
-        .eq("version", bundle.model_version)
-        .eq("mode", bundle.mode)
+        .eq("version", target_prediction.model_version)
+        .eq("mode", mode)
         .limit(1)
         .execute()
     )
@@ -28,9 +30,10 @@ def ensure_model_version(supabase, bundle: PredictionBundle) -> str:
         supabase.table("model_versions")
         .insert(
             {
-                "version": bundle.model_version,
-                "mode": bundle.mode,
-                "targets": [t.target for t in bundle.targets],
+                "version": target_prediction.model_version,
+                "mode": mode,
+                "algorithm": target_prediction.algorithm,
+                "targets": [target_prediction.target],
             }
         )
         .execute()
@@ -79,15 +82,12 @@ def create_assessment(
     bundle: PredictionBundle,
     notes: str | None = None,
 ) -> str:
-    model_version_id = ensure_model_version(supabase, bundle)
-
     assessment = (
         supabase.table("assessments")
         .insert(
             {
                 "child_id": child_id,
                 "performed_by": performed_by,
-                "model_version_id": model_version_id,
                 "input_data": input_data,
                 "notes": notes,
             }
@@ -97,15 +97,19 @@ def create_assessment(
 
     assessment_id = assessment["id"]
 
-    prediction_rows = [
-        {
-            "assessment_id": assessment_id,
-            "target": t.target,
-            "predicted_label": t.predicted_label,
-            "probability": t.probability,
-        }
-        for t in bundle.targets
-    ]
+    prediction_rows = []
+    for t in bundle.targets:
+        model_version_id = ensure_model_version(supabase, t, bundle.mode)
+        prediction_rows.append(
+            {
+                "assessment_id": assessment_id,
+                "target": t.target,
+                "predicted_label": t.predicted_label,
+                "probability": t.probability,
+                "model_version_id": model_version_id,
+                "decision_threshold": t.decision_threshold,
+            }
+        )
     supabase.table("assessment_predictions").insert(prediction_rows).execute()
 
     explanation_rows = []
@@ -130,13 +134,25 @@ def create_assessment(
 
 
 def _shape_predictions(rows: list[dict]) -> dict:
-    return {
-        row["target"]: {
+    shaped = {}
+    for row in rows:
+        model_version = row.get("model_versions")
+        shaped[row["target"]] = {
             "predictedLabel": row["predicted_label"],
             "probability": row["probability"],
+            "decisionThreshold": row.get("decision_threshold"),
+            "modelVersion": model_version["version"] if model_version else None,
+            "algorithm": model_version["algorithm"] if model_version else None,
+            "mode": model_version["mode"] if model_version else None,
         }
-        for row in rows
-    }
+    return shaped
+
+
+def _infer_mode(predictions: dict) -> str | None:
+    for prediction in predictions.values():
+        if prediction.get("mode"):
+            return prediction["mode"]
+    return None
 
 
 def _shape_explanations(rows: list[dict]) -> list[dict]:
@@ -165,9 +181,9 @@ def get_assessment_detail(supabase, assessment_id: str) -> dict | None:
         .select(
             "id, child_id, performed_by, input_data, notes, assessed_at, "
             "children(id, child_code, sex), "
-            "model_versions(version, mode), "
             "profiles(full_name), "
-            "assessment_predictions(target, predicted_label, probability), "
+            "assessment_predictions(target, predicted_label, probability, decision_threshold, "
+            "model_versions(version, mode, algorithm)), "
             "prediction_explanations(target, method, feature_key, feature_label, contribution, direction)"
         )
         .eq("id", assessment_id)
@@ -186,9 +202,8 @@ def get_assessment_detail(supabase, assessment_id: str) -> dict | None:
         "inputData": row["input_data"],
         "notes": row["notes"],
         "assessedAt": row["assessed_at"],
-        "modelVersion": row["model_versions"]["version"] if row["model_versions"] else None,
-        "mode": row["model_versions"]["mode"] if row["model_versions"] else None,
         "predictions": _shape_predictions(row["assessment_predictions"]),
+        "mode": _infer_mode(_shape_predictions(row["assessment_predictions"])),
         "explanations": _shape_explanations(row["prediction_explanations"]),
     }
 
@@ -205,7 +220,8 @@ def list_assessments(
         .select(
             "id, child_id, performed_by, assessed_at, "
             "children(child_code, sex), "
-            "assessment_predictions(target, predicted_label, probability)"
+            "assessment_predictions(target, predicted_label, probability, decision_threshold, "
+            "model_versions(version, mode, algorithm))"
         )
         .order("assessed_at", desc=True)
         .limit(limit)
@@ -233,7 +249,11 @@ def list_assessments(
 def get_child_history(supabase, child_id: str) -> list[dict]:
     rows = (
         supabase.table("assessments")
-        .select("id, assessed_at, assessment_predictions(target, predicted_label, probability)")
+        .select(
+            "id, assessed_at, "
+            "assessment_predictions(target, predicted_label, probability, decision_threshold, "
+            "model_versions(version, mode, algorithm))"
+        )
         .eq("child_id", child_id)
         .order("assessed_at", desc=False)
         .execute()

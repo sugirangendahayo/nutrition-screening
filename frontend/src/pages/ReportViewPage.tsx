@@ -61,10 +61,6 @@ export function ReportViewPage() {
             <p className="text-ink-500">Assessed by</p>
             <p className="font-medium text-ink-900">{assessment.performedByName ?? "Not available"}</p>
           </div>
-          <div>
-            <p className="text-ink-500">Model version</p>
-            <p className="font-medium text-ink-900">{assessment.modelVersion ?? "unknown"}</p>
-          </div>
         </section>
 
         <section className="mb-6">
@@ -78,6 +74,9 @@ export function ReportViewPage() {
                 </div>
                 <p className="mt-2 text-sm text-ink-600">
                   Probability: {formatProbability(prediction.probability)}
+                </p>
+                <p className="mt-1 text-xs text-ink-500">
+                  Model: {prediction.modelVersion} ({prediction.algorithm})
                 </p>
               </div>
             ))}

@@ -2,9 +2,23 @@
 
 Supabase Auth issues the JWT access token to the frontend after login.
 The frontend forwards it as `Authorization: Bearer <token>` on every
-request to this API. We verify the token's signature locally using the
-project's JWT secret, then look up the user's role from the `profiles`
-table (never trusting a role claim supplied by the client).
+request to this API. We verify the token's signature locally, then look
+up the user's role from the `profiles` table (never trusting a role
+claim supplied by the client).
+
+Supabase projects sign access tokens one of two ways (see
+https://supabase.com/docs/guides/auth/signing-keys):
+
+- Legacy projects: a single shared secret, HS256 (`SUPABASE_JWT_SECRET`).
+- Newer projects (default since mid-2025): asymmetric keys (ES256/RS256),
+  verified with the project's public JWKS
+  (`<SUPABASE_URL>/auth/v1/.well-known/jwks.json`) - no shared secret
+  involved at all.
+
+We inspect the token's own `alg` header (unverified - it only selects
+*how* to verify, the signature check itself still fails for a tampered
+token) and dispatch to whichever method applies, so this backend works
+against either kind of project without extra configuration.
 """
 from __future__ import annotations
 
@@ -15,6 +29,21 @@ from flask import current_app, g, request
 
 from app.services.supabase_service import get_supabase
 from app.utils.responses import fail
+
+_jwks_clients: dict[str, "jwt.PyJWKClient"] = {}
+
+
+def _get_jwks_client(supabase_url: str) -> "jwt.PyJWKClient":
+    """Cached PyJWKClient for the project's public signing keys.
+
+    PyJWKClient caches the fetched key set in-process and only re-fetches
+    when it encounters an unknown `kid`, so this does not hit the network
+    on every request.
+    """
+    if supabase_url not in _jwks_clients:
+        jwks_url = supabase_url.rstrip("/") + "/auth/v1/.well-known/jwks.json"
+        _jwks_clients[supabase_url] = jwt.PyJWKClient(jwks_url, cache_keys=True)
+    return _jwks_clients[supabase_url]
 
 ROLE_ADMIN = "administrator"
 ROLE_HEALTHCARE_WORKER = "healthcare_worker"
@@ -39,11 +68,27 @@ def _extract_token() -> str:
 
 
 def _decode_token(token: str) -> dict:
-    secret = current_app.config.get("SUPABASE_JWT_SECRET")
-    if not secret:
-        raise AuthError("Server is not configured for authentication.", status=500)
     try:
-        return jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
+        header = jwt.get_unverified_header(token)
+    except jwt.PyJWTError as exc:
+        raise AuthError(f"Invalid or expired session: {exc}") from exc
+
+    algorithm = header.get("alg", "HS256")
+
+    try:
+        if algorithm == "HS256":
+            secret = current_app.config.get("SUPABASE_JWT_SECRET")
+            if not secret:
+                raise AuthError("Server is not configured for authentication.", status=500)
+            return jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
+
+        # Asymmetric signing keys (ES256/RS256) - verify against the
+        # project's public JWKS instead of a shared secret.
+        supabase_url = current_app.config.get("SUPABASE_URL")
+        if not supabase_url:
+            raise AuthError("Server is not configured for authentication.", status=500)
+        signing_key = _get_jwks_client(supabase_url).get_signing_key_from_jwt(token)
+        return jwt.decode(token, signing_key.key, algorithms=[algorithm], audience="authenticated")
     except jwt.PyJWTError as exc:
         raise AuthError(f"Invalid or expired session: {exc}") from exc
 

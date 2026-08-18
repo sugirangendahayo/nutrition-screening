@@ -1,6 +1,7 @@
 import { Input } from "@/components/ui/Input";
 import { RadioGroup } from "@/components/ui/RadioGroup";
 import { Select } from "@/components/ui/Select";
+import { LabelConfidenceBadge } from "@/features/screening/LabelConfidenceBadge";
 import type { FeatureField } from "@/types";
 import type { FormValues } from "@/features/screening/formHelpers";
 
@@ -18,11 +19,14 @@ export function ScreeningFormFields({ fields, values, errors, onChange }: Props)
         const value = values[field.key] ?? "";
         const error = errors[field.key];
 
+        const labelBadge = <LabelConfidenceBadge confidence={field.labelConfidence} />;
+
         if (field.inputType === "number") {
           return (
             <Input
               key={field.key}
               label={field.label}
+              labelBadge={labelBadge}
               required={field.required}
               unit={field.unit ?? undefined}
               helpText={field.helpText ?? undefined}
@@ -44,6 +48,7 @@ export function ScreeningFormFields({ fields, values, errors, onChange }: Props)
               key={field.key}
               name={field.key}
               label={field.label}
+              labelBadge={labelBadge}
               required={field.required}
               helpText={field.helpText ?? undefined}
               error={error}
@@ -58,6 +63,7 @@ export function ScreeningFormFields({ fields, values, errors, onChange }: Props)
           <Select
             key={field.key}
             label={field.label}
+            labelBadge={labelBadge}
             required={field.required}
             helpText={field.helpText ?? undefined}
             error={error}
