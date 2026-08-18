@@ -30,27 +30,28 @@ class Config:
 
     # --- ML model -------------------------------------------------------
     # "development" allows the app to run with the mock provider when no
-    # trained artifact is available yet. "production" requires a real model.
-    ML_MODEL_STATUS = os.environ.get("ML_MODEL_STATUS", "development")
+    # trained artifact is available. "production" requires the two real
+    # artifacts below to load successfully.
+    ML_MODEL_STATUS = os.environ.get("ML_MODEL_STATUS", "production")
 
-    # "single_multioutput" or "dual_model"
-    MODEL_MODE = os.environ.get("MODEL_MODE", "dual_model")
+    STUNTING_MODEL_PATH = os.environ.get("STUNTING_MODEL_PATH", "models/stunting_model.pkl")
+    UNDERWEIGHT_MODEL_PATH = os.environ.get("UNDERWEIGHT_MODEL_PATH", "models/underweight_model.pkl")
 
-    MODEL_PATH = os.environ.get("MODEL_PATH", "models/model.joblib")
-    STUNTING_MODEL_PATH = os.environ.get("STUNTING_MODEL_PATH", "models/stunting_model.joblib")
-    UNDERWEIGHT_MODEL_PATH = os.environ.get("UNDERWEIGHT_MODEL_PATH", "models/underweight_model.joblib")
-    PREPROCESSOR_PATH = os.environ.get("PREPROCESSOR_PATH", "")
+    # Free-text version labels surfaced in the UI and stored with every
+    # prediction, one per target since each is an independently trained
+    # artifact (Random Forest for stunting, XGBoost for underweight).
+    STUNTING_MODEL_VERSION = os.environ.get("STUNTING_MODEL_VERSION", "car-mics6-stunting-rf-v1")
+    UNDERWEIGHT_MODEL_VERSION = os.environ.get("UNDERWEIGHT_MODEL_VERSION", "car-mics6-underweight-xgb-v1")
 
-    # Small representative sample of training-like rows (joblib-pickled
-    # pandas DataFrame) used as the SHAP background distribution for local
-    # explanations. Optional - falls back to global importance if absent.
-    BACKGROUND_DATA_PATH = os.environ.get("BACKGROUND_DATA_PATH", "")
+    # Decision thresholds applied to predict_proba() to derive the
+    # "at_risk" / "not_at_risk" label. These are NOT embedded in the
+    # pickled pipelines - they were chosen during training by maximizing
+    # F1 on held-out data (see docs/MODEL_INTEGRATION.md) and must be
+    # applied by the application, not assumed to be 0.5.
+    STUNTING_DECISION_THRESHOLD = float(os.environ.get("STUNTING_DECISION_THRESHOLD", "0.5"))
+    UNDERWEIGHT_DECISION_THRESHOLD = float(os.environ.get("UNDERWEIGHT_DECISION_THRESHOLD", "0.275"))
 
-    MODEL_VERSION = os.environ.get("MODEL_VERSION", "dev-mock-1.0")
-
-    @property
-    def is_production_model(self) -> bool:
-        return self.ML_MODEL_STATUS == "production"
+    MOCK_MODEL_VERSION = os.environ.get("MOCK_MODEL_VERSION", "dev-mock-1.0")
 
 
 config = Config()

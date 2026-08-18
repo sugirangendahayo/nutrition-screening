@@ -6,7 +6,7 @@ saved result always reflects the actual model output for that input.
 """
 from flask import Blueprint, g, request
 
-from app.ml.feature_schema import PREDICTION_TARGETS
+from app.ml.feature_schema import PREDICTION_TARGETS, derive_child_sex
 from app.ml.provider_factory import get_provider, get_provider_error
 from app.services import assessment_service
 from app.services.supabase_service import get_supabase
@@ -52,10 +52,11 @@ def create_assessment():
         if not child:
             return fail("The selected child record could not be found.", status=404)
     else:
-        if "sex" not in cleaned:
-            return fail("Sex is required to create a new child record.", status=422)
+        sex = derive_child_sex(cleaned)
+        if sex is None:
+            return fail("Sex (HL4) is required to create a new child record.", status=422)
         child = assessment_service.create_child(
-            supabase, created_by=g.current_user["id"], sex=cleaned["sex"]
+            supabase, created_by=g.current_user["id"], sex=sex
         )
 
     bundle = provider.predict(cleaned)

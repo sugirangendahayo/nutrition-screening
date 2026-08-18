@@ -13,11 +13,21 @@ The system predicts two specific outcomes for each screening:
 It is a **decision-support tool**, not a diagnostic system. Every result
 screen and report states this explicitly.
 
-> **The trained machine learning model is not yet integrated.** The system
-> runs today with a clearly labeled development/mock prediction provider so
-> the full application can be built, tested, and demonstrated. See
-> [`docs/MODEL_INTEGRATION.md`](docs/MODEL_INTEGRATION.md) for the exact
-> procedure to plug in the real model when it is ready.
+> **The trained machine learning models are integrated and active by
+> default** (`ML_MODEL_STATUS=production`): a Random Forest for stunting and
+> an XGBoost model for underweight, both trained on the CAR MICS6 dataset
+> (see [`docs/MODEL_INFO.md`](docs/MODEL_INFO.md) and
+> [`docs/MODEL_INTEGRATION.md`](docs/MODEL_INTEGRATION.md)). A clearly
+> labeled development/mock provider is still available as a fallback (set
+> `ML_MODEL_STATUS=development`) for working on the app without the trained
+> artifacts present.
+>
+> Several raw MICS6 predictor codes (e.g. `CA31`, `HH7`, `religion`,
+> `ethnicity`) could not be matched to a confirmed human-readable label
+> because the CAR codebook/SPSS value labels were not available at
+> integration time. These fields are shown with their raw code and a visible
+> "Unverified label" badge rather than a guessed clinical label - see
+> `docs/MODEL_INFO.md` section on label confidence.
 
 ---
 
@@ -51,7 +61,9 @@ Flask API (Python)
         |
         |  ModelProvider abstraction
         v
-ML Model  (Mock provider today -> Real trained artifact later)
+ML Models  (RealModelProvider: RandomForest for stunting, XGBoost for
+            underweight - falls back to a labeled MockModelProvider if
+            ML_MODEL_STATUS=development)
         |
         v
 Supabase PostgreSQL  (via service-role key, backend-only)
@@ -81,8 +93,11 @@ nutrition-screening/
 │   │   ├── services/             Business logic (Supabase queries, trend calc, reports)
 │   │   ├── schemas/              (reserved for future request/response schemas)
 │   │   └── utils/                 Auth, validation, response helpers
-│   ├── models/                   Trained model artifacts go here (gitignored)
-│   ├── tests/                    Pytest suite
+│   ├── models/                   Trained model artifacts go here (gitignored):
+│   │                             stunting_model.pkl, underweight_model.pkl
+│   ├── scripts/verify_artifacts.py  Diagnostic script: loads both artifacts and
+│   │                                 runs a sample prediction end-to-end
+│   ├── tests/                    Pytest suite (incl. tests against the real artifacts)
 │   ├── requirements.txt
 │   └── run.py
 ├── frontend/                    React app
@@ -96,9 +111,12 @@ nutrition-screening/
 │       ├── pages/                   Route-level pages
 │       └── types/                   Shared TypeScript types
 ├── supabase/
-│   ├── migrations/0001_init.sql    Full schema, triggers, RLS policies
-│   └── seed_dev_data.sql            Optional development-only sample data
+│   ├── migrations/0001_init.sql              Full schema, triggers, RLS policies
+│   ├── migrations/0002_per_target_model_version.sql
+│   │                                          Per-target model version/threshold on predictions
+│   └── seed_dev_data.sql                      Optional development-only sample data
 ├── docs/
+│   ├── MODEL_INFO.md                Findings from inspecting the trained artifacts
 │   ├── MODEL_INTEGRATION.md         Model contract + integration steps
 │   └── research/Chapter_3.md        Source research chapter
 └── README.md
@@ -107,7 +125,10 @@ nutrition-screening/
 ## 4. Requirements
 
 - Node.js 18+
-- Python 3.11+ (tested on 3.14)
+- **Python 3.12 or earlier.** `scikit-learn` is pinned to `1.6.1` to exactly
+  match the version used to train/pickle the supplied model artifacts (newer
+  scikit-learn cannot load them - see `backend/requirements.txt` and
+  `docs/MODEL_INFO.md`), and 1.6.1 has no wheels for Python 3.13/3.14.
 - A Supabase project (free tier is sufficient for development)
 
 ## 5. Database setup (Supabase)
@@ -120,9 +141,17 @@ nutrition-screening/
      expose this to the frontend)
    - **JWT Secret** (Project Settings -> API -> JWT Settings) ->
      `SUPABASE_JWT_SECRET`
-3. Open the **SQL Editor** and run `supabase/migrations/0001_init.sql`. This
-   creates all tables, the `user_role` enum, a trigger that auto-provisions a
-   default profile for every new auth user, and Row Level Security policies.
+3. Open the **SQL Editor** and run the three migrations in
+   `supabase/migrations/`, **in numeric order**:
+   `0001_init.sql`, then `0002_per_target_model_version.sql`, then
+   `0003_grant_public_schema_privileges.sql`. Together they create all
+   tables, the `user_role` enum, a trigger that auto-provisions a default
+   profile for every new auth user, Row Level Security policies, per-target
+   model version/decision-threshold tracking on each prediction, and the
+   base table privileges the backend's `service_role` key needs (on newer
+   projects, the "Automatically expose new tables" setting defaults to off,
+   so this grant no longer happens automatically - see the comment at the
+   top of `0003_grant_public_schema_privileges.sql`).
 4. **Create your first user.** In Supabase Dashboard -> Authentication ->
    Users, click "Add user" and create an account with a password (or sign up
    from the app once it's running). A `profiles` row is created automatically
@@ -160,8 +189,10 @@ documented list. Key ones:
 |---|---|---|
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` | backend | Server-side Supabase access & JWT verification |
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | frontend | Browser-side Supabase Auth |
-| `ML_MODEL_STATUS` | backend | `development` (mock) or `production` (real model required) |
-| `MODEL_MODE`, `*_MODEL_PATH`, `PREPROCESSOR_PATH`, `BACKGROUND_DATA_PATH` | backend | Real model artifact configuration - see `docs/MODEL_INTEGRATION.md` |
+| `ML_MODEL_STATUS` | backend | `production` (default; real models, requires the artifacts below) or `development` (mock) |
+| `STUNTING_MODEL_PATH`, `UNDERWEIGHT_MODEL_PATH` | backend | Paths to the two trained `.pkl` artifacts (default `models/stunting_model.pkl` / `models/underweight_model.pkl`) |
+| `STUNTING_MODEL_VERSION`, `UNDERWEIGHT_MODEL_VERSION` | backend | Free-text version labels stored with every prediction |
+| `STUNTING_DECISION_THRESHOLD`, `UNDERWEIGHT_DECISION_THRESHOLD` | backend | `predict_proba()` cutoffs chosen during training by maximizing F1 (0.5 / 0.275 by default - see `docs/MODEL_INFO.md`) |
 
 ## 7. Installation & running
 
@@ -176,7 +207,15 @@ cp .env.example .env            # then fill in your Supabase values
 python run.py
 ```
 
-The API runs at `http://localhost:5000`.
+The API runs at `http://localhost:5000`. On startup with the default
+`ML_MODEL_STATUS=production`, place the two trained artifacts at
+`backend/models/stunting_model.pkl` and `backend/models/underweight_model.pkl`
+(gitignored - not committed to source control), then confirm they load
+correctly with:
+
+```bash
+python scripts/verify_artifacts.py
+```
 
 ### Frontend
 
@@ -192,20 +231,28 @@ server during development (see `vite.config.ts`).
 
 ## 8. Running without the trained model (development mode)
 
-Leave `ML_MODEL_STATUS=development` in `backend/.env` (the default). The
-backend serves predictions from `MockModelProvider`, a deterministic
-placeholder function - **not** a real ML model. Every response is tagged
-`mode: "mock"` and the UI shows a persistent "Development mode" banner. This
-lets you exercise the entire workflow (form -> prediction -> explanation ->
-save -> history -> trend -> report) before the real model exists.
+Set `ML_MODEL_STATUS=development` in `backend/.env` if the trained artifacts
+are temporarily unavailable (e.g. working on the app without copying the
+`.pkl` files). The backend then serves predictions from `MockModelProvider`,
+a deterministic placeholder function - **not** a real ML model. Every
+response is tagged `mode: "mock"` and the UI shows a persistent "Development
+mode" banner. This lets you exercise the entire workflow (form -> prediction
+-> explanation -> save -> history -> trend -> report) without the real
+artifacts present.
 
-## 9. Adding the trained model
+## 9. Updating or replacing the trained model
 
-Follow [`docs/MODEL_INTEGRATION.md`](docs/MODEL_INTEGRATION.md) exactly. In
-short: inspect the artifact first, reconcile `backend/app/ml/feature_schema.py`
-with its real expected features, place the artifact(s) in `backend/models/`,
-set `ML_MODEL_STATUS=production` with the matching `MODEL_MODE`/path
-variables, and test the full workflow before considering it done.
+The two trained artifacts (`stunting_model.pkl` - Random Forest,
+`underweight_model.pkl` - XGBoost) are already integrated per
+`docs/MODEL_INFO.md` and `docs/MODEL_INTEGRATION.md`. If a retrained or
+updated artifact is supplied later, follow
+[`docs/MODEL_INTEGRATION.md`](docs/MODEL_INTEGRATION.md) exactly: inspect the
+new artifact first (do not assume its shape matches the current one),
+reconcile `backend/app/ml/feature_schema.py` if its expected raw features
+changed, replace the file(s) in `backend/models/`, run
+`python scripts/verify_artifacts.py`, update the corresponding
+`*_MODEL_VERSION`/`*_DECISION_THRESHOLD` env vars, and test the full workflow
+before considering it done.
 
 ## 10. API endpoints
 

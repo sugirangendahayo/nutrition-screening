@@ -16,6 +16,9 @@ def test_probabilities_are_in_range():
     for target in bundle.targets:
         assert 0.0 <= target.probability <= 1.0
         assert target.predicted_label in ("at_risk", "not_at_risk")
+        assert target.decision_threshold == 0.5
+        assert target.model_version
+        assert target.algorithm
 
 
 def test_prediction_is_deterministic_for_same_input():
@@ -36,8 +39,8 @@ def test_explanation_is_clearly_marked_as_mock():
 
 def test_different_inputs_can_produce_different_scores():
     provider = MockModelProvider()
-    low = dict(VALID_SCREENING_INPUT, weight_kg=5.0, height_cm=60.0, child_age_months=6)
-    high = dict(VALID_SCREENING_INPUT, weight_kg=18.0, height_cm=110.0, child_age_months=55)
+    low = dict(VALID_SCREENING_INPUT, CAGE=2, windex5="1.0", melevel="0.0")
+    high = dict(VALID_SCREENING_INPUT, CAGE=55, windex5="5.0", melevel="3.0")
     bundle_low = provider.predict(low)
     bundle_high = provider.predict(high)
     assert bundle_low.to_dict() != bundle_high.to_dict()

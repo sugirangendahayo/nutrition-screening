@@ -1,5 +1,3 @@
-import json
-
 from tests.conftest import VALID_SCREENING_INPUT
 
 
@@ -36,7 +34,7 @@ def test_predictions_returns_both_targets_for_valid_input(client, auth_as):
 def test_predictions_rejects_invalid_input(client, auth_as):
     auth_as("healthcare_worker")
     bad_payload = dict(VALID_SCREENING_INPUT)
-    del bad_payload["weight_kg"]
+    del bad_payload["CAGE"]
     response = client.post(
         "/api/predictions",
         json={"inputData": bad_payload},
@@ -45,4 +43,4 @@ def test_predictions_rejects_invalid_input(client, auth_as):
     body = response.get_json()
     assert response.status_code == 422
     assert body["success"] is False
-    assert "weight_kg" in body["error"]["details"]
+    assert "CAGE" in body["error"]["details"]

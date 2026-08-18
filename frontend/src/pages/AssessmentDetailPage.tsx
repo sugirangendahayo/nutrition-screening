@@ -33,7 +33,6 @@ export function AssessmentDetailPage() {
 
   const result = {
     mode: detail.mode ?? "mock",
-    modelVersion: detail.modelVersion ?? "unknown",
     generatedAt: detail.assessedAt,
     targets: Object.values(detail.predictions),
     explanations: detail.explanations,
@@ -47,9 +46,7 @@ export function AssessmentDetailPage() {
         <CardHeader className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle>Child {detail.child.child_code}</CardTitle>
-            <p className="mt-1 text-sm text-ink-500">
-              Screened on {formatDateTime(detail.assessedAt)} - Model version: {detail.modelVersion}
-            </p>
+            <p className="mt-1 text-sm text-ink-500">Screened on {formatDateTime(detail.assessedAt)}</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => navigate(`/children/${detail.child.id}`)}>
