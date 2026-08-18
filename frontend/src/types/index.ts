@@ -23,6 +23,7 @@ export type ModelMode = "mock" | "real";
 export type TrendStatus = "improving" | "worsening" | "stable" | "insufficient_data";
 
 export type FieldInputType = "number" | "select" | "radio";
+export type LabelConfidence = "confirmed" | "standard_convention" | "unverified";
 
 export interface FieldOption {
   value: string;
@@ -34,6 +35,7 @@ export interface FeatureField {
   label: string;
   section: string;
   inputType: FieldInputType;
+  labelConfidence: LabelConfidence;
   required: boolean;
   unit: string | null;
   min: number | null;
@@ -55,11 +57,16 @@ export interface ModelSchema {
   targets: PredictionTarget[];
 }
 
+export interface ModelTargetInfo {
+  version: string;
+  algorithm: string;
+  decisionThreshold: number;
+}
+
 export interface ModelInfo {
   available: boolean;
   mode?: ModelMode;
-  version?: string;
-  algorithm?: string;
+  targets?: Record<PredictionTarget, ModelTargetInfo>;
   explanationMethod?: string;
   note?: string;
   error?: string | null;
@@ -107,6 +114,9 @@ export interface TargetPrediction {
   target: PredictionTarget;
   predictedLabel: PredictedLabel;
   probability: number | null;
+  decisionThreshold: number;
+  modelVersion: string;
+  algorithm: string;
 }
 
 export interface ExplanationItem {
@@ -135,7 +145,6 @@ export interface TrendResult {
 
 export interface PredictionResponse {
   mode: ModelMode;
-  modelVersion: string;
   targets: TargetPrediction[];
   explanations: TargetExplanation[];
   generatedAt: string;
@@ -168,7 +177,6 @@ export interface AssessmentDetail {
   inputData: Record<string, string | number>;
   notes: string | null;
   assessedAt: string;
-  modelVersion: string | null;
   mode: ModelMode | null;
   predictions: Record<PredictionTarget, TargetPrediction>;
   explanations: TargetExplanation[];

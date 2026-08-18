@@ -152,6 +152,13 @@ export function NewScreeningPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <Alert tone="warning" title="Some field labels are pending verification">
+        This form is driven directly by the trained model's real input fields. A few fields
+        (marked "Unverified label") use the raw MICS6 dataset code because their exact
+        meaning has not yet been confirmed against the official codebook. See{" "}
+        docs/MODEL_INTEGRATION.md for details.
+      </Alert>
+
       <Card>
         <CardHeader>
           <CardTitle>Child Record</CardTitle>
