@@ -106,10 +106,15 @@ export function SettingsPage() {
             <p className="text-ink-500">Prediction model mode</p>
             <p className="font-medium capitalize text-ink-900">{modelInfo?.mode ?? "unknown"}</p>
           </div>
-          <div>
-            <p className="text-ink-500">Model version</p>
-            <p className="font-medium text-ink-900">{modelInfo?.version ?? "unknown"}</p>
-          </div>
+          {modelInfo?.targets &&
+            Object.entries(modelInfo.targets).map(([target, info]) => (
+              <div key={target}>
+                <p className="text-ink-500 capitalize">{target} model</p>
+                <p className="font-medium text-ink-900">
+                  {info.algorithm} ({info.version})
+                </p>
+              </div>
+            ))}
         </CardContent>
       </Card>
     </div>
