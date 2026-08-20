@@ -4,14 +4,6 @@
 *.env
 !.env.example
 
-# --- Python / backend ---
-backend/venv/
-backend/**/__pycache__/
-backend/**/*.pyc
-backend/.pytest_cache/
-backend/models/*.joblib
-backend/models/*.pkl
-!backend/models/.gitkeep
 
 # --- Node / frontend ---
 frontend/node_modules/
